@@ -296,6 +296,8 @@ static void damon_test_split_evenly_succ(struct kunit *test,
 
 static void damon_test_split_evenly(struct kunit *test)
 {
+	struct damon_ctx *c = damon_new_ctx();
+
 	KUNIT_EXPECT_EQ(test, damon_va_evenly_split_region(NULL, NULL, 5),
 			-EINVAL);
 
@@ -303,6 +305,8 @@ static void damon_test_split_evenly(struct kunit *test)
 	damon_test_split_evenly_succ(test, 0, 100, 10);
 	damon_test_split_evenly_succ(test, 5, 59, 5);
 	damon_test_split_evenly_fail(test, 5, 6, 2);
+
+	damon_destroy_ctx(c);
 }
 
 static struct kunit_case damon_test_cases[] = {
