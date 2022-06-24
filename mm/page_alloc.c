@@ -3987,44 +3987,6 @@ static inline void zone_statistics(struct zone *preferred_zone, struct zone *z,
 #endif
 }
 
-#ifdef CONFIG_CMA
-/*
- * GFP_MOVABLE allocation could drain UNMOVABLE & RECLAIMABLE page blocks via
- * the help of CMA which makes GFP_KERNEL failed. Checking if zone_watermark_ok
- * again without ALLOC_CMA to see if to use CMA first.
- */
-static bool use_cma_first(struct zone *zone, unsigned int order, unsigned int alloc_flags)
-{
-	unsigned long watermark;
-	bool cma_first = false;
-
-	watermark = wmark_pages(zone, alloc_flags & ALLOC_WMARK_MASK);
-	/* check if GFP_MOVABLE pass previous zone_watermark_ok via the help of CMA */
-	if (zone_watermark_ok(zone, order, watermark, 0, alloc_flags & (~ALLOC_CMA))) {
-		/*
-		 * Balance movable allocations between regular and CMA areas by
-		 * allocating from CMA when over half of the zone's free memory
-		 * is in the CMA area.
-		 */
-		cma_first = (zone_page_state(zone, NR_FREE_CMA_PAGES) >
-				zone_page_state(zone, NR_FREE_PAGES) / 2);
-	} else {
-		/*
-		 * watermark failed means UNMOVABLE & RECLAIMBLE is not enough
-		 * now, we should use cma first to keep them stay around the
-		 * corresponding watermark
-		 */
-		cma_first = true;
-	}
-	return cma_first;
-}
-#else
-static bool use_cma_first(struct zone *zone, unsigned int order, unsigned int alloc_flags)
-{
-	return false;
-}
-#endif
-
 static __always_inline
 struct page *rmqueue_buddy(struct zone *preferred_zone, struct zone *zone,
 			   unsigned int order, unsigned int alloc_flags,
@@ -4167,6 +4129,12 @@ struct page *rmqueue(struct zone *preferred_zone,
 {
 	struct page *page;
 
+	/*
+	 * We most definitely don't want callers attempting to
+	 * allocate greater than order-1 page units with __GFP_NOFAIL.
+	 */
+	WARN_ON_ONCE((gfp_flags & __GFP_NOFAIL) && (order > 1));
+
 	if (likely(pcp_allowed_order(order))) {
 		page = rmqueue_pcplist(preferred_zone, zone, order,
 				gfp_flags, migratetype, alloc_flags);
@@ -4174,35 +4142,10 @@ struct page *rmqueue(struct zone *preferred_zone,
 			goto out;
 	}
 
-	/*
-	 * We most definitely don't want callers attempting to
-	 * allocate greater than order-1 page units with __GFP_NOFAIL.
-	 */
-	WARN_ON_ONCE((gfp_flags & __GFP_NOFAIL) && (order > 1));
-
-	do {
-		page = NULL;
-		spin_lock_irqsave(&zone->lock, flags);
-		/*
-		 * order-0 request can reach here when the pcplist is skipped
-		 * due to non-CMA allocation context. HIGHATOMIC area is
-		 * reserved for high-order atomic allocation, so order-0
-		 * request should skip it.
-		 */
-		if (order > 0 && alloc_flags & ALLOC_HARDER)
-			page = __rmqueue_smallest(zone, order, MIGRATE_HIGHATOMIC);
-		if (!page) {
-			page = __rmqueue(zone, order, migratetype, alloc_flags);
-			if (!page)
-				goto failed;
-		}
-		__mod_zone_freepage_state(zone, -(1 << order),
-					  get_pcppage_migratetype(page));
-		spin_unlock_irqrestore(&zone->lock, flags);
-	} while (check_new_pages(page, order));
-
-	__count_zid_vm_events(PGALLOC, page_zonenum(page), 1 << order);
-	zone_statistics(preferred_zone, zone, 1);
+	page = rmqueue_buddy(preferred_zone, zone, order, alloc_flags,
+							migratetype);
+	if (unlikely(!page))
+		return NULL;
 
 out:
 	/* Separate test+clear to avoid unnecessary atomics */
