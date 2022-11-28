@@ -2983,9 +2983,7 @@ static int __allocate_new_segment(struct f2fs_sb_info *sbi, int type,
 		return ret;
 alloc:
 	old_segno = curseg->segno;
-	ret = SIT_I(sbi)->s_ops->allocate_segment(sbi, type, true);
-	if (ret)
-		return ret;
+	allocate_segment_by_default(sbi, type, true);
 	locate_dirty_segment(sbi, old_segno);
 	return ret;
 }
@@ -3019,10 +3017,6 @@ int f2fs_allocate_new_segments(struct f2fs_sb_info *sbi)
 
 	return err;
 }
-
-static const struct segment_allocation default_salloc_ops = {
-	.allocate_segment = allocate_segment_by_default,
-};
 
 bool f2fs_exist_trim_candidates(struct f2fs_sb_info *sbi,
 						struct cp_control *cpc)
@@ -3447,10 +3441,7 @@ int f2fs_allocate_data_block(struct f2fs_sb_info *sbi, struct page *page,
 			ret = get_atssr_segment(sbi, type, se->type,
 						AT_SSR, se->mtime);
 		else
-			ret = sit_i->s_ops->allocate_segment(sbi, type, false);
-
-		if (ret)
-			goto out_err;
+			allocate_segment_by_default(sbi, type, false);
 	}
 	/*
 	 * segment dirty status should be updated after segment allocation,
@@ -4450,9 +4441,6 @@ static int build_sit_info(struct f2fs_sb_info *sbi)
 	if (!sit_i->invalid_segmap)
 		return -ENOMEM;
 #endif
-
-	/* init SIT information */
-	sit_i->s_ops = &default_salloc_ops;
 
 	sit_i->sit_base_addr = le32_to_cpu(raw_super->sit_blkaddr);
 	sit_i->sit_blocks = sit_segs << sbi->log_blocks_per_seg;
