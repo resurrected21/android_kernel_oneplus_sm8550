@@ -978,8 +978,8 @@ wait_for_construction:
 			status = nfserr_jukebox;
 			goto out;
 		}
-		retry = false;
-		nfsd_file_put_noref(nf);
+		nfsd_file_put(nf);
+		open_retry = false;
 		goto retry;
 	}
 
