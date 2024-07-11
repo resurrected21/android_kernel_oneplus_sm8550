@@ -965,8 +965,9 @@ retry:
 	nf = nfsd_file_find_locked(inode, may_flags, hashval, net);
 	if (nf == NULL)
 		goto open_file;
-	spin_unlock(&nfsd_file_hashtbl[hashval].nfb_lock);
-	nfsd_file_slab_free(&new->nf_rcu);
+	trace_nfsd_file_insert_err(rqstp, inode, may_flags, ret);
+	status = nfserr_jukebox;
+	goto construction_err;
 
 wait_for_construction:
 	wait_on_bit(&nf->nf_flags, NFSD_FILE_PENDING, TASK_UNINTERRUPTIBLE);
