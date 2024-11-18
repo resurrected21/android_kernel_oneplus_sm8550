@@ -1655,8 +1655,9 @@ nfsd4_copy(struct svc_rqst *rqstp, struct nfsd4_compound_state *cstate,
 	__be32 status;
 	struct nfsd4_copy *async_copy = NULL;
 
-	if (!copy->cp_intra) { /* Inter server SSC */
-		if (!inter_copy_offload_enable || copy->cp_synchronous) {
+	copy->cp_clp = cstate->clp;
+	if (nfsd4_ssc_is_inter(copy)) {
+		if (!inter_copy_offload_enable || nfsd4_copy_is_sync(copy)) {
 			status = nfserr_notsupp;
 			goto out;
 		}
@@ -1670,7 +1671,6 @@ nfsd4_copy(struct svc_rqst *rqstp, struct nfsd4_compound_state *cstate,
 			return status;
 	}
 
-	copy->cp_clp = cstate->clp;
 	memcpy(&copy->fh, &cstate->current_fh.fh_handle,
 		sizeof(struct knfsd_fh));
 	if (!copy->cp_synchronous) {
