@@ -26,9 +26,8 @@
 /* Threshold for detecting small packets to copy */
 #define GOOD_COPY_LEN  128
 
-uint virtio_transport_max_vsock_pkt_buf_size = 64 * 1024;
-module_param(virtio_transport_max_vsock_pkt_buf_size, uint, 0444);
-EXPORT_SYMBOL_GPL(virtio_transport_max_vsock_pkt_buf_size);
+static void virtio_transport_cancel_close_work(struct vsock_sock *vsk,
+					       bool cancel_timeout);
 
 static const struct virtio_transport *
 virtio_transport_get_ops(struct vsock_sock *vsk)
@@ -815,6 +814,8 @@ void virtio_transport_destruct(struct vsock_sock *vsk)
 {
 	struct virtio_vsock_sock *vvs = vsk->trans;
 
+	virtio_transport_cancel_close_work(vsk, true);
+
 	kfree(vvs);
 	vsk->trans = NULL;
 }
@@ -903,6 +904,22 @@ static void virtio_transport_wait_close(struct sock *sk, long timeout)
 	}
 }
 
+static void virtio_transport_cancel_close_work(struct vsock_sock *vsk,
+					       bool cancel_timeout)
+{
+	struct sock *sk = sk_vsock(vsk);
+
+	if (vsk->close_work_scheduled &&
+	    (!cancel_timeout || cancel_delayed_work(&vsk->close_work))) {
+		vsk->close_work_scheduled = false;
+
+		virtio_transport_remove_sock(vsk);
+
+		/* Release refcnt obtained when we scheduled the timeout */
+		sock_put(sk);
+	}
+}
+
 static void virtio_transport_do_close(struct vsock_sock *vsk,
 				      bool cancel_timeout)
 {
@@ -914,15 +931,7 @@ static void virtio_transport_do_close(struct vsock_sock *vsk,
 		sk->sk_state = TCP_CLOSING;
 	sk->sk_state_change(sk);
 
-	if (vsk->close_work_scheduled &&
-	    (!cancel_timeout || cancel_delayed_work(&vsk->close_work))) {
-		vsk->close_work_scheduled = false;
-
-		virtio_transport_remove_sock(vsk);
-
-		/* Release refcnt obtained when we scheduled the timeout */
-		sock_put(sk);
-	}
+	virtio_transport_cancel_close_work(vsk, cancel_timeout);
 }
 
 static void virtio_transport_close_timeout(struct work_struct *work)
