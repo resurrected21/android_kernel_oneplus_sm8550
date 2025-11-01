@@ -1,0 +1,278 @@
+name: Build OnePlus 12R Upstreamed Kernel
+
+on:
+  workflow_dispatch:
+    inputs:
+      kernel_repo:
+        description: 'Your upstreamed kernel repository'
+        required: true
+        default: 'resurrected21/android_kernel_oneplus_sm8550'
+      kernel_branch:
+        description: 'Branch name'
+        required: true
+        default: 'upstream-12r'
+
+permissions:
+  contents: write
+  actions: write
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    
+    steps:
+      - name: Checkout Build Repository
+        uses: actions/checkout@v4
+      
+      - name: Free Up Disk Space
+        run: |
+          echo "Freeing up disk space..."
+          sudo rm -rf /usr/share/dotnet
+          sudo rm -rf /opt/ghc
+          sudo rm -rf /usr/local/share/boost
+          sudo rm -rf "$AGENT_TOOLSDIRECTORY"
+          df -h
+      
+      - name: Install Dependencies
+        run: |
+          echo "Installing build dependencies..."
+          sudo apt-get update -qq
+          sudo DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
+            git curl ca-certificates build-essential clang lld flex bison \
+            libelf-dev libssl-dev libncurses-dev zlib1g-dev liblz4-tool \
+            libxml2-utils rsync unzip dwarves file python3 bc wget zip
+          echo "Dependencies installed!"
+      
+      - name: Install Repo Tool
+        run: |
+          echo "Installing repo tool..."
+          sudo curl https://storage.googleapis.com/git-repo-downloads/repo -o /usr/local/bin/repo
+          sudo chmod +x /usr/local/bin/repo
+          repo --version
+      
+      - name: Initialize Kernel Source with Repo
+        run: |
+          echo "Setting up kernel source directories..."
+          mkdir -p kernel_workspace
+          cd kernel_workspace
+          
+          echo "Initializing repo with OnePlus manifest..."
+          git config --global user.name "GitHub Actions Bot"
+          git config --global user.email "actions@github.com"
+          
+          repo init -u https://github.com/OnePlusOSS/kernel_manifest.git \
+            -b oneplus/sm8550 \
+            -m oneplus_12r_v.xml \
+            --repo-rev=v2.16 \
+            --depth=1 \
+            --no-clone-bundle \
+            --no-tags
+          
+          echo "Repo initialized!"
+      
+      - name: Replace with Your Upstreamed Kernel
+        run: |
+          cd kernel_workspace
+          
+          echo "Creating local manifest to use your upstreamed kernel..."
+          mkdir -p .repo/local_manifests
+          
+          cat > .repo/local_manifests/custom_kernel.xml <<'EOF'
+          <?xml version="1.0" encoding="UTF-8"?>
+          <manifest>
+            <remote name="github" fetch="https://github.com" />
+            
+            <!-- Remove the original OnePlus kernel -->
+            <remove-project name="kernel_platform/common" />
+            
+            <!-- Add your upstreamed kernel instead -->
+            <project path="kernel_platform/common" 
+                     name="${{ github.event.inputs.kernel_repo }}" 
+                     remote="github" 
+                     revision="${{ github.event.inputs.kernel_branch }}" 
+                     clone-depth="1" />
+          </manifest>
+          EOF
+          
+          echo "Local manifest created!"
+          cat .repo/local_manifests/custom_kernel.xml
+      
+      - name: Sync All Repositories
+        run: |
+          cd kernel_workspace
+          echo "Syncing all kernel repositories (this takes 10-15 minutes)..."
+          
+          repo sync -c --no-clone-bundle --no-tags \
+            -j$(nproc --all) --fail-fast || \
+          repo sync -c --no-clone-bundle --no-tags \
+            -j$(nproc --all) --fail-fast || \
+          repo sync -c --no-clone-bundle --no-tags \
+            -j$(nproc --all) --fail-fast
+          
+          echo "Sync completed!"
+          ls -la kernel_platform/
+      
+      - name: Verify Kernel Version
+        run: |
+          cd kernel_workspace/kernel_platform/common
+          echo "Checking kernel version..."
+          grep "^VERSION\|^PATCHLEVEL\|^SUBLEVEL" Makefile
+          
+          VERSION=$(grep '^VERSION =' Makefile | awk '{print $3}')
+          PATCHLEVEL=$(grep '^PATCHLEVEL =' Makefile | awk '{print $3}')
+          SUBLEVEL=$(grep '^SUBLEVEL =' Makefile | awk '{print $3}')
+          
+          echo "KERNEL_VERSION=${VERSION}.${PATCHLEVEL}.${SUBLEVEL}" >> $GITHUB_ENV
+          echo "Building kernel version: ${VERSION}.${PATCHLEVEL}.${SUBLEVEL}"
+      
+      - name: Clone AnyKernel3 and Dependencies
+        run: |
+          echo "Cloning AnyKernel3 flashable template..."
+          git clone https://github.com/TheWildJames/AnyKernel3.git -b gki-2.0 --depth=1
+          
+          echo "Cloning kernel patches..."
+          git clone https://github.com/TheWildJames/kernel_patches.git --depth=1
+          
+          echo "Cloning SUSFS..."
+          git clone https://gitlab.com/simonpunk/susfs4ksu.git --depth=1
+          cd susfs4ksu
+          git checkout gki-android13-5.15 || git checkout gki-android14-5.15
+          echo "SUSFS_VERSION=$(grep '#define SUSFS_VERSION' kernel_patches/include/linux/susfs.h | awk -F'"' '{print $2}')" >> $GITHUB_ENV
+      
+      - name: Setup KernelSU Next
+        run: |
+          cd kernel_workspace/kernel_platform
+          echo "Setting up KernelSU Next..."
+          
+          curl -LSs "https://raw.githubusercontent.com/KernelSU-Next/KernelSU-Next/next/kernel/setup.sh" | bash -s stable
+          
+          cd KernelSU-Next
+          git submodule update --init --recursive
+          
+          KSUN_COMMIT=$(git rev-parse HEAD)
+          echo "KSUN_COMMIT=$KSUN_COMMIT" >> $GITHUB_ENV
+          
+          BASE_VERSION=10200
+          KSU_VERSION=$(expr $(git rev-list --count HEAD) + $BASE_VERSION)
+          echo "KSU_VERSION=$KSU_VERSION" >> $GITHUB_ENV
+          echo "KernelSU Next version: $KSU_VERSION"
+      
+      - name: Apply SUSFS Patches
+        run: |
+          cd kernel_workspace/kernel_platform
+          echo "Applying SUSFS patches..."
+          
+          # Copy SUSFS files
+          cp ../../susfs4ksu/kernel_patches/50_add_susfs_in_gki-android13-5.15.patch ./common/ || \
+          cp ../../susfs4ksu/kernel_patches/50_add_susfs_in_gki-android14-5.15.patch ./common/
+          
+          cp ../../susfs4ksu/kernel_patches/fs/* ./common/fs/ 2>/dev/null || true
+          cp ../../susfs4ksu/kernel_patches/include/linux/* ./common/include/linux/ 2>/dev/null || true
+          
+          # Apply SUSFS to KernelSU
+          cd KernelSU-Next
+          cp ../../../susfs4ksu/kernel_patches/KernelSU/10_enable_susfs_for_ksu.patch ./
+          patch -p1 --forward < 10_enable_susfs_for_ksu.patch || true
+          
+          # Apply SUSFS to kernel
+          cd ../common
+          patch -p1 < 50_add_susfs_in_gki-android13-5.15.patch || \
+          patch -p1 < 50_add_susfs_in_gki-android14-5.15.patch
+          
+          echo "SUSFS patches applied!"
+      
+      - name: Configure Kernel
+        run: |
+          cd kernel_workspace/kernel_platform/common
+          echo "Adding KernelSU and SUSFS configurations..."
+          
+          cat >> arch/arm64/configs/gki_defconfig <<'EOF'
+          CONFIG_KSU=y
+          CONFIG_KSU_SUSFS=y
+          CONFIG_KSU_SUSFS_HAS_MAGIC_MOUNT=y
+          CONFIG_KSU_SUSFS_SUS_PATH=y
+          CONFIG_KSU_SUSFS_SUS_MOUNT=y
+          CONFIG_KSU_SUSFS_SUS_KSTAT=y
+          CONFIG_KSU_SUSFS_TRY_UMOUNT=y
+          CONFIG_KSU_SUSFS_SPOOF_UNAME=y
+          CONFIG_KSU_SUSFS_ENABLE_LOG=y
+          CONFIG_TCP_CONG_BBR=y
+          CONFIG_WIREGUARD=y
+          EOF
+          
+          echo "Configuration added!"
+      
+      - name: Build Kernel
+        run: |
+          cd kernel_workspace/kernel_platform/common
+          echo "Starting kernel build..."
+          
+          export ARCH=arm64
+          export SUBARCH=arm64
+          export LLVM=1
+          export LLVM_IAS=1
+          
+          # Find clang
+          CLANG_PATH=$(find ../prebuilts*/clang/host/linux-x86 -name "clang-r*" -type d | sort -V | tail -n1)
+          export PATH="$CLANG_PATH/bin:$PATH"
+          
+          echo "Using clang: $(which clang)"
+          clang --version
+          
+          # Build
+          make O=out gki_defconfig
+          make O=out -j$(nproc --all) 2>&1 | tee build.log
+          
+          echo "Build completed!"
+          ls -lh out/arch/arm64/boot/Image
+      
+      - name: Package Kernel ZIP
+        run: |
+          echo "Creating flashable ZIP..."
+          
+          cp kernel_workspace/kernel_platform/common/out/arch/arm64/boot/Image AnyKernel3/
+          
+          cd AnyKernel3
+          ZIP_NAME="OnePlus_12R_Upstreamed_${KERNEL_VERSION}_KSU_${KSU_VERSION}_SUSFS_${SUSFS_VERSION}.zip"
+          
+          zip -r9 "../${ZIP_NAME}" *
+          
+          echo "ZIP_NAME=$ZIP_NAME" >> $GITHUB_ENV
+          echo "Flashable ZIP created: $ZIP_NAME"
+      
+      - name: Upload Kernel Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: upstreamed-kernel
+          path: "*.zip"
+      
+      - name: Create Release
+        uses: softprops/action-gh-release@v1
+        with:
+          tag_name: "v${{ env.KERNEL_VERSION }}-build${{ github.run_number }}"
+          name: "OnePlus 12R Upstreamed Kernel ${{ env.KERNEL_VERSION }}"
+          files: "*.zip"
+          body: |
+            ## OnePlus 12R Custom Kernel - Upstreamed
+            
+            **Kernel Version**: Linux ${{ env.KERNEL_VERSION }} LTS
+            **KernelSU Next**: ${{ env.KSU_VERSION }}
+            **SUSFS Version**: ${{ env.SUSFS_VERSION }}
+            **Build Date**: ${{ github.event.repository.updated_at }}
+            
+            ### Features
+            - ✅ Upstreamed to latest 5.15 LTS patches
+            - ✅ KernelSU Next (commit: ${{ env.KSUN_COMMIT }})
+            - ✅ SUSFS - Full root hiding
+            - ✅ BBR TCP congestion control
+            - ✅ Wireguard VPN support
+            
+            ### Installation
+            1. Download the ZIP file below
+            2. Boot into TWRP/custom recovery
+            3. Flash the ZIP
+            4. Reboot
+            5. Install KernelSU Manager app
+            
+            **Build**: #${{ github.run_number }}
