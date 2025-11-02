@@ -1354,10 +1354,6 @@ static const struct freq_tbl ftbl_gcc_sdcc4_apps_clk_src[] = {
 	F(9600000, P_BI_TCXO, 2, 0, 0),
 	F(19200000, P_BI_TCXO, 1, 0, 0),
 	F(50000000, P_GPLL0_OUT_MAIN, 12, 0, 0),
-<<<<<<< HEAD
-	F(75000000, P_GPLL0_OUT_MAIN, 8, 0, 0),
-=======
->>>>>>> ab727ca020e6 (clk: qcom: gcc-sc8180x: Fix the sdcc2 and sdcc4 clocks freq table)
 	F(100000000, P_GPLL0_OUT_MAIN, 6, 0, 0),
 	{ }
 };

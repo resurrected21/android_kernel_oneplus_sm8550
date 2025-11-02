@@ -2124,14 +2124,10 @@ static int f2fs_ioc_commit_atomic_write(struct file *filp)
 	struct user_namespace *mnt_userns = file_mnt_user_ns(filp);
 	int ret;
 
-<<<<<<< HEAD
-	if (!inode_owner_or_capable(mnt_userns, inode))
-=======
 	if (!(filp->f_mode & FMODE_WRITE))
 		return -EBADF;
 
 	if (!inode_owner_or_capable(&init_user_ns, inode))
->>>>>>> 88ff021e1fea (f2fs: Require FMODE_WRITE for atomic write ioctls)
 		return -EACCES;
 
 	ret = mnt_want_write_file(filp);
@@ -2163,9 +2159,6 @@ static int f2fs_ioc_abort_atomic_write(struct file *filp)
 	struct user_namespace *mnt_userns = file_mnt_user_ns(filp);
 	int ret;
 
-<<<<<<< HEAD
-	if (!inode_owner_or_capable(mnt_userns, inode))
-=======
 	if (!(filp->f_mode & FMODE_WRITE))
 		return -EBADF;
 
@@ -2208,7 +2201,6 @@ static int f2fs_ioc_release_volatile_write(struct file *filp)
 		return -EBADF;
 
 	if (!inode_owner_or_capable(&init_user_ns, inode))
->>>>>>> 88ff021e1fea (f2fs: Require FMODE_WRITE for atomic write ioctls)
 		return -EACCES;
 
 	ret = mnt_want_write_file(filp);
@@ -2217,9 +2209,6 @@ static int f2fs_ioc_release_volatile_write(struct file *filp)
 
 	inode_lock(inode);
 
-<<<<<<< HEAD
-	f2fs_abort_atomic_write(inode, true);
-=======
 	if (!f2fs_is_volatile_file(inode))
 		goto out;
 
@@ -2261,7 +2250,6 @@ static int f2fs_ioc_abort_volatile_write(struct file *filp)
 	}
 
 	clear_inode_flag(inode, FI_ATOMIC_REVOKE_REQUEST);
->>>>>>> 88ff021e1fea (f2fs: Require FMODE_WRITE for atomic write ioctls)
 
 	inode_unlock(inode);
 
